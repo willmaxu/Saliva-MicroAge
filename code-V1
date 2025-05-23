@@ -1,0 +1,422 @@
+##2025.5.23
+##系统报错改为英文
+Sys.setenv(LANGUAGE = "en")
+##禁止转化为因子
+options(stringsAsFactors = FALSE)
+##清空环境
+rm(list=ls())
+memory.limit()
+memory.limit(155446)
+memory.limit()
+library(dplyr)
+library(tidyverse)
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(tidyr)
+library(tidyverse)
+library(ggpubr)
+library(RColorBrewer)
+library(ggsci)
+library(microbiome) # data analysis and visualisation
+library(RColorBrewer) # nice color options
+library(DT) # interactive tables in html and markdown
+library(data.table) # alternative to data.frame
+library(rstatix)
+library(psych)
+library(pheatmap)
+library(corrplot)
+library(cowplot)  # 组合绘图包
+library(gridExtra)  # 网格绘图包
+library(vegan)
+library(scales)  # 用于 darken 函数
+library(DataExplorer)
+library(caret)
+library(pROC)
+library(tidyverse)
+library(lightgbm)
+
+###基于‌决策树算法的梯度提升框架（Decision Tree Algorithm）模型:‌
+##LightGBM（Light Gradient Boosting Machine）‌
+
+setwd("X:\\3/micro16s/data")
+# 读取数据
+moni <- read.table("model1.csv", sep = ",", header = TRUE)
+
+# 将前 7 列作为非预测变量，后面列作为预测变量
+x <- as.matrix(moni[, 9:1664])  # 从第9列到第1664列为预测变量
+y <- moni$age  # 实际年龄作为响应变量
+
+# 将数据集划分为训练集和测试集（70%训练，30%测试）
+set.seed(123)
+test_index <- createDataPartition(moni$age, p = 0.3, list = FALSE)
+x_train <- x[-test_index, ]
+x_test <- x[test_index, ]
+y_train <- y[-test_index]
+y_test <- y[test_index]
+
+# 将数据转换为 LightGBM 数据集格式
+dtrain <- lgb.Dataset(data = x_train, label = y_train)
+dtest <- lgb.Dataset(data = x_test, label = y_test, reference = dtrain)
+
+# 设置 LightGBM 参数
+params <- list(
+  objective = "regression",
+  metric = "rmse",
+  boosting_type = "gbdt",
+  num_leaves = 31,
+  learning_rate = 0.05,
+  feature_fraction = 0.9
+)
+
+# 训练模型
+lgb_model <- lgb.train(
+  params,
+  dtrain,
+  100,  # 迭代次数
+  valids = list(test = dtest),
+  early_stopping_rounds = 10
+)
+
+# 使用测试集进行预测
+predicted_ages <- predict(lgb_model, x_test)
+
+# 计算均方误差 (MSE)
+mse <- mean((y_test - predicted_ages)^2)
+cat("测试集上的均方误差 (MSE):", mse, "\n")
+##测试集上的均方误差 (MSE): 55.51646
+
+# 可视化实际年龄与预测年龄的对比
+results <- data.frame(actual_age = y_test, predicted_age = predicted_ages)
+
+ggplot(results, aes(x = actual_age, y = predicted_age)) +
+  geom_point(color = "#7ABDCD", size = 3, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "#0F8199") +
+  labs(title = "Actual Age vs Predicted Age",
+       x = "Actual Age",
+       y = "Predicted Age") +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 1.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# 计算 R²
+r_squared <- cor(results$actual_age, results$predicted_age)^2
+cat("R²: ", r_squared, "\n")
+##R2:  0.9131193 
+
+# 计算 p 值
+cor_test <- cor.test(results$actual_age, results$predicted_age)
+p_value <- cor_test$p.value
+cat("p-value: ", p_value, "\n")
+##p-value:  1.07673e-220 
+
+# 可视化实际年龄与预测年龄的对比
+ggplot(results, aes(x = actual_age, y = predicted_age)) +
+  geom_point(color = "#CCAA7A", size = 3, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "#996010") +
+  labs(title = "Actual Age vs Predicted Age",
+       subtitle = paste("R² =", round(r_squared, 2), ", p-value =", format(p_value, scientific = TRUE)),
+       x = "Actual Age",
+       y = "Predicted Age") +
+  ylim(0, 100) +  # 设置 Y 轴的范围为 0 到 100
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 1.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# 将预测结果添加到测试集
+data_test <- moni[test_index, ]
+data_test$predicted_age <- predicted_ages
+
+# 计算预测年龄与实际年龄的差值 ProtAgeGap
+data_test$ProtAgeGap <- data_test$predicted_age - data_test$age
+
+# 自定义大洲的颜色
+continent_colors <- c("Africa" = "#7BC5CE", "Asia" = "#A1CD5A", "Europe" = "#D0AB7E")
+
+# 绘制小提琴图
+ggplot(data_test, aes(x = continent, y = ProtAgeGap, fill = continent)) +
+  geom_violin(trim = FALSE, color = "black") +  # 绘制小提琴图，外框为黑色
+  stat_summary(fun = mean, geom = "point", color = "black", size = 2) +  # 在小提琴图中央显示均值
+  scale_fill_manual(values = continent_colors) +  # 自定义不同大洲的颜色
+  labs(title = "ProtAgeGap by Continent",
+       x = "Continent",
+       y = "Predicted Age - Actual Age (ProtAgeGap)") +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),  # 移除网格背景
+    panel.border = element_rect(color = "black", fill = NA),  # 四周加上黑色边框
+    plot.title = element_text(hjust = 0.5)  # 标题居中
+  )
+
+
+save.image("LightGBM913.RData")
+load("LightGBM913.RData")
+
+
+
+##关于回归模型
+library(ggplot2)
+library(dplyr)
+library(broom) # 用于提取模型的回归系数
+
+
+data_test1 <- data_test[,-c(9:1665)]
+
+# 改变基准类别，比如设置 'Healthy' 为基准类别
+data_test1$disease <- as.factor(data_test1$disease)
+data_test1$disease <- relevel(data_test1$disease, ref = "Healthy")
+
+# 构建多元线性回归模型
+model <- lm(ProtAgeGap ~ disease + sex + Country + continent + age + City + agegroup, data = data_test1)
+
+# 查看模型摘要
+summary(model)
+
+# 提取回归结果
+model_results <- tidy(model) %>%
+  filter(term != "(Intercept)") %>% 
+  filter(grepl("disease", term)) %>%
+  mutate(term = gsub("disease", "", term))  # 去掉 "disease" 前缀
+
+# 查看结果
+print(model_results)
+
+# 绘制图表
+ggplot(model_results, aes(x = estimate, y = reorder(term, estimate))) + 
+  geom_point(size = 3, color = "blue") +  # 将点设置为蓝色
+  geom_errorbarh(aes(xmin = estimate - std.error, xmax = estimate + std.error), 
+                 height = 0.2, color = "blue") +  # 将误差条设置为蓝色
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +  # 添加虚线
+  labs(x = "Beta", y = "Disease", title = "Effect of Disease on ProtAgeGap") + 
+  # 显示 p 值，p < 0.001 显示为 p < 0.001，其余保留三位小数
+  geom_text(aes(x = estimate, 
+                label = ifelse(p.value < 0.001, "p < 0.001", paste0("p = ", round(p.value, 3)))), 
+            vjust = 1.5, hjust = 0.4, color = "black", size = 3.5) +  # 控制标签格式
+  theme_minimal() +  # 去掉背景网格
+  theme(panel.grid = element_blank(),  # 移除网格线
+        panel.border = element_rect(fill = NA, color = "black"), # 添加方框
+        axis.line = element_line(color = "black"),  # 四周方框为黑色
+        axis.text.y = element_text(size = 12))  # 调整疾病名称的文字大小
+
+
+
+
+library(lightgbm)
+library(dplyr)
+library(ggplot2)
+load("LightGBM913.RData")
+
+# 获取特征重要性
+importance <- lgb.importance(lgb_model, percentage = TRUE)
+
+# 选择前20个特征
+top_features <- importance %>% 
+  top_n(20, wt = Gain) %>% 
+  pull(Feature)
+
+# 使用选定的前20个特征进行模型训练
+x_train_selected <- x_train[, top_features]
+x_test_selected <- x_test[, top_features]
+
+# 将数据转换为 LightGBM 数据集格式
+dtrain_selected <- lgb.Dataset(data = x_train_selected, label = y_train)
+dtest_selected <- lgb.Dataset(data = x_test_selected, label = y_test, reference = dtrain_selected)
+
+# 设置 LightGBM 参数
+params_selected <- list(
+  objective = "regression",
+  metric = "rmse",
+  boosting_type = "gbdt",
+  num_leaves = 31,
+  learning_rate = 0.05,
+  feature_fraction = 0.9
+)
+
+# 训练精简特征模型
+lgb_model_selected <- lgb.train(
+  params_selected,
+  dtrain_selected,
+  100,  # 迭代次数
+  valids = list(test = dtest_selected),
+  early_stopping_rounds = 10
+)
+
+# 使用测试集进行预测
+predicted_ages_selected <- predict(lgb_model_selected, x_test_selected)
+
+# 计算均方误差 (MSE)
+mse_selected <- mean((y_test - predicted_ages_selected)^2)
+cat("测试集上的均方误差 (MSE)（使用前20个特征）:", mse_selected, "\n")
+##测试集上的均方误差 (MSE)（使用前20个特征）: 60.55132
+
+# 计算 R²
+r_squared_selected <- cor(y_test, predicted_ages_selected)^2
+cat("R²（使用前20个特征）: ", r_squared_selected, "\n")
+##R2（使用前20个特征）:  0.905362
+
+# 计算 p 值
+cor_test_selected <- cor.test(y_test, predicted_ages_selected)
+p_value_selected <- cor_test_selected$p.value
+cat("p-value（使用前20个特征）: ", p_value_selected, "\n")
+##p-value（使用前20个特征）:  4.844221e-213 
+
+# 可视化实际年龄与预测年龄的对比
+results_selected <- data.frame(actual_age = y_test, predicted_age = predicted_ages_selected)
+
+ggplot(results_selected, aes(x = actual_age, y = predicted_age)) +
+  geom_point(color = "#7ABDCD", size = 3, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "#0F8199") +
+  labs(title = "Actual Age vs Predicted Age (Top 20 Features)",
+       x = "Actual Age",
+       y = "Predicted Age") +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 1.5)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+##读一下这20个前面的重要因素是什么
+tax <- read.table("TAXyu1.csv", sep = ",", header = TRUE)
+colnames(tax)[1] <- "Feature"
+
+# 选择前20个特征
+top_feature <- importance %>% 
+  top_n(20, wt = Gain)
+
+# 打印前20个特征的重要性
+print(top_feature)
+top_features.frame <- left_join(top_feature,tax,by="Feature")
+
+
+# 可视化前20个特征的重要性
+ggplot(top_feature, aes(x = reorder(Feature, Gain), y = Gain)) +
+  geom_bar(stat = "identity", fill = "#4F7CAC") +
+  coord_flip() +
+  labs(title = "Top 20 Important Features",
+       x = "Feature",
+       y = "Importance (Gain)") +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 1.5)) +
+  theme(plot.title = element_text(hjust = 0.5))  
+
+table(top_features.frame$Genus)
+
+top_features.frame <- top_features.frame %>% 
+  arrange(desc(Gain))  # 按 Gain 排序，确保图表显示时按顺序排列
+
+library(ggplot2)
+library(dplyr)
+
+# 使用已存在的 top_features.frame 数据框
+# 创建 Genus 与颜色的映射
+genus_colors <- c(
+  "Streptococcus" = "#C0485C", 
+  "Selenomonas" = "#CF7987", 
+  "Prevotella" = "#E8B8C1", 
+  "Leptotrichia" = "#99610F", 
+  "Neisseria" = "#B4813F", 
+  "Veillonella" = "#CDAA7A", 
+  "Fusobacterium" = "#E6D2B9", 
+  "Haemophilus" = "#78B33E", 
+  "Porphyromonas" = "#CEE7B9", 
+  "Aggregatibacter" = "#307988", 
+  "Rothia" = "#3E9FB2", 
+  "Alloprevotella" = "#B8DFE7"
+)
+
+
+# 标记不在给定Genus中的条目为 "Residuals"
+top_features.frame$label <- top_features.frame$Genus
+top_features.frame$label <- ifelse(top_features.frame$Genus %in% names(genus_colors), 
+                                   top_features.frame$Genus, "Residuals")
+
+# 添加Residuals的颜色
+genus_colors["Residuals"] <- "#F0F0F0"
+
+# 创建一个新列，包含 Genus 和 Species 信息，格式为 "Genus (Species)"
+top_features.frame$Label <- paste(top_features.frame$Genus, "(", top_features.frame$Species, ")", sep = "")
+
+# 绘制带颜色区分的条形图，并根据 Genus 显示图例
+ggplot(top_features.frame, aes(x = reorder(Feature, Gain), y = Gain, fill = label)) +
+  geom_bar(stat = "identity") +  # 绘制条形图
+  coord_flip() +  # 翻转坐标，使条形图横向显示
+  labs(title = "Top 20 Important Features by Genus and Species",
+       x = "Feature",
+       y = "Importance (Gain)") +
+  scale_fill_manual(values = genus_colors) +  # 使用自定义颜色
+  theme_minimal() +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 1.5)) +  # 黑色边框
+  theme(plot.title = element_text(hjust = 0.5),  # 标题居中
+        legend.title = element_text(size = 10),  # 图例标题大小
+        legend.text = element_text(size = 8))    # 图例文本大小
+
+
+##构建的两个模型画在一起
+第一步：构建两个回归模型
+r
+复制代码
+library(ggplot2)
+library(dplyr)
+library(broom)  # 用于提取模型的回归系数
+# 假设 data_test是您的原始数据
+data_test$disease[data_test$disease == 'HC'] <- 'Healthy'
+data_test1 <- data_test[,-c(9:1665)]
+data_test1$ProtAgeGap_top_20 <- predicted_ages_selected-data_test1$age
+
+# 改变基准类别，比如设置 'Healthy' 为基准类别
+data_test1$disease <- as.factor(data_test1$disease)
+data_test1$disease <- relevel(data_test1$disease, ref = "Healthy")
+
+# 构建第一个模型：基于所有因素
+model_full <- lm(ProtAgeGap ~ disease + sex + Country + continent + age + City + agegroup, data = data_test1)
+
+# 构建第二个模型：基于前20个因素
+model_reduced <- lm(ProtAgeGap_top_20 ~ disease + sex + Country + continent + age + City + agegroup, data = data_test1)
+
+# 提取模型结果
+model_full_results <- tidy(model_full) %>%
+  filter(term != "(Intercept)") %>%
+  filter(grepl("disease", term)) %>%
+  mutate(term = gsub("disease", "", term))  # 去掉 "disease" 前缀
+
+model_reduced_results <- tidy(model_reduced) %>%
+  filter(term != "(Intercept)") %>%
+  filter(grepl("disease", term)) %>%
+  mutate(term = gsub("disease", "", term))  # 去掉 "disease" 前缀
+
+# 添加模型类型信息
+model_full_results$model <- "All Factors"
+model_reduced_results$model <- "Top 20 Factors"
+
+# 合并两个模型的结果
+combined_results <- bind_rows(model_full_results, model_reduced_results)
+
+# 绘制两个模型的结果在同一个图中
+ggplot(combined_results, aes(x = estimate, y = reorder(term, estimate), color = model)) +
+  geom_point(size = 3) +
+  geom_errorbarh(aes(xmin = estimate - std.error, xmax = estimate + std.error), height = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  labs(x = "Beta", y = "Disease", title = "Effect of Disease on ProtAgeGap") +
+  scale_color_manual(values = c("#000088", "#8D0000")) +  # 为两个模型使用不同的颜色
+  theme_minimal() +
+  theme(panel.grid = element_blank(), 
+        panel.border = element_rect(fill = NA, color = "black"), 
+        axis.line = element_line(color = "black"),
+        plot.title = element_text(hjust = 0.5))
+
+
+ggplot(combined_results, aes(x = estimate, y = reorder(term, estimate), color = model)) +
+  geom_point(aes(group = model), size = 3, position = position_dodge(width = 0.25)) +
+  geom_errorbarh(aes(xmin = estimate - std.error, xmax = estimate + std.error, group = model), 
+                 height = 0.2, position = position_dodge(width = 0.25)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  labs(x = "Beta", y = "Disease", title = "Effect of Disease on ProtAgeGap") +
+  scale_color_manual(values = c("Top 20 Factors" = "#8D0000", "All Factors" = "#000088")) +  # 为两个模型使用不同的颜色
+  theme_minimal() +
+  theme(panel.grid = element_blank(), 
+        panel.border = element_rect(fill = NA, color = "black"), 
+        axis.line = element_line(color = "black"),
+        plot.title = element_text(hjust = 0.5))
+
+
+
+
